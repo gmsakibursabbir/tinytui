@@ -2,7 +2,7 @@
 
 A Production-Ready, Cross-Platform TUI + CLI application for compressing images using the TinyPNG / Tinify Developer API.
 
-![TiniTUI Demo](demo.png)
+![TiniTUI Demo](https://i.postimg.cc/c4jmmRFM/Screenshot-20260202-133121-1.png)
 
 ## Features
 
@@ -112,6 +112,5 @@ Stored in `~/.config/tinytui/config.json`.
 History stored in `~/.local/state/tinytui/history.json`.
 
 Permissions are restricted to `0600` for security.
-
 
 text
