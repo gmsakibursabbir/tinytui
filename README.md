@@ -112,3 +112,6 @@ Stored in `~/.config/tinytui/config.json`.
 History stored in `~/.local/state/tinytui/history.json`.
 
 Permissions are restricted to `0600` for security.
+
+
+text
