@@ -204,20 +204,14 @@ func (m MainModel) View() string {
 }
 
 func (m MainModel) renderMascot() string {
-	// Simple ASCII Panda Face
-	// State based?
-	face := "(^. .^)"
-	if m.state == StateCompress {
-		face = "(O . O)" // working
-	}
-	// Happy if success? we need to track last success status in main model?
-	// For now simple.
+	isWorking := m.state == StateCompress
+	art := getMascot(m.config.MascotType, isWorking)
 	
 	return lipgloss.NewStyle().
 		MarginLeft(2).
 		Foreground(lipgloss.Color("255")).
 		Background(lipgloss.Color("0")).
-		Render(face + " \n/| |\\ \n U U")
+		Render(art)
 }
 func (m MainModel) renderTopBar() string {
 	// App name + version | API status | Output mode | Tabs

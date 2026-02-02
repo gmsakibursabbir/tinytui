@@ -29,15 +29,19 @@ type Config struct {
 	Suffix       string     `json:"suffix"`
 	Metadata     bool       `json:"metadata"`
 	Mascot       MascotMode `json:"mascot"`
+	MascotType   string     `json:"mascot_type"` // "panda", "waifu1", "waifu2"
+	Concurrency  int        `json:"concurrency"`
 	configPath   string
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		OutputMode: "replace",
-		Suffix:     ".tiny",
-		Metadata:   false,
-		Mascot:     MascotAuto,
+		OutputMode:  "replace",
+		Suffix:      ".tiny",
+		Metadata:    false,
+		Mascot:      MascotAuto,
+		MascotType:  "panda",
+		Concurrency: 2,
 	}
 }
 

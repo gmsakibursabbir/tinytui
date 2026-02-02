@@ -24,10 +24,14 @@ type progressModel struct {
 }
 
 func newProgressModel() progressModel {
-	p := progress.New(progress.WithDefaultGradient())
+	// Custom Gradient: Pink to Purple (Waifu aesthetic)
+	p := progress.New(
+		progress.WithGradient("#FF7CCB", "#8888FF"),
+		progress.WithoutPercentage(),
+	)
 	s := spinner.New()
-	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	s.Spinner = spinner.MiniDot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("213")) // Pinkish
 	
 	return progressModel{
 		spinner:  s,
