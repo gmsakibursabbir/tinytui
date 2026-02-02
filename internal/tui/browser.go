@@ -134,41 +134,58 @@ func (b *browserModel) scanDirectory() {
 		b.err = err
 		return
 	}
+
+	// Filter: Images and Directories only
+	var filtered []os.DirEntry
+	for _, e := range entries {
+		if e.IsDir() {
+			filtered = append(filtered, e)
+			continue
+		}
+		
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		switch ext {
+		case ".jpg", ".jpeg", ".png", ".webp":
+			filtered = append(filtered, e)
+		}
+	}
 	
 	// Sort
-	sort.Slice(entries, func(i, j int) bool {
+	sort.Slice(filtered, func(i, j int) bool {
 		// Always Directories First
-		if entries[i].IsDir() != entries[j].IsDir() {
-			return entries[i].IsDir()
+		if filtered[i].IsDir() != filtered[j].IsDir() {
+			return filtered[i].IsDir()
 		}
 		
 		// Then Sort By Mode
 		
 		switch b.sortMode {
 		case 1: // Size
-			iInfo, _ := entries[i].Info()
-			jInfo, _ := entries[j].Info()
+			iInfo, _ := filtered[i].Info()
+			jInfo, _ := filtered[j].Info()
 			if iInfo != nil && jInfo != nil {
-				return iInfo.Size() < jInfo.Size() == b.sortAsc
+				if b.sortAsc { return iInfo.Size() < jInfo.Size() }
+				return iInfo.Size() > jInfo.Size()
 			}
 		case 2: // Date
-			iInfo, _ := entries[i].Info()
-			jInfo, _ := entries[j].Info()
+			iInfo, _ := filtered[i].Info()
+			jInfo, _ := filtered[j].Info()
 			if iInfo != nil && jInfo != nil {
-				return iInfo.ModTime().Before(jInfo.ModTime()) == b.sortAsc
+				if b.sortAsc { return iInfo.ModTime().Before(jInfo.ModTime()) }
+				return iInfo.ModTime().After(jInfo.ModTime())
 			}
 		default: // Name (0)
 			// String comparison for Name
-			less := entries[i].Name() < entries[j].Name()
+			less := filtered[i].Name() < filtered[j].Name()
 			if !b.sortAsc {
 				return !less
 			}
 			return less
 		}
-		return entries[i].Name() < entries[j].Name() // Fallback
+		return filtered[i].Name() < filtered[j].Name() // Fallback
 	})
 	
-	b.currentEntries = entries
+	b.currentEntries = filtered
 	b.updateListItems()
 }
 
@@ -554,121 +571,127 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 // It is in the same package `tui`. If I declared it in `progress.go` as `func formatBytes`, it is accessible here.
 
 func (m MainModel) viewBrowser() string {
-	// Yazi Layout: [ List (50%) ] [ Preview (50%) ]
+	// Layout Values
+	listWidth := (m.width / 2) - 3
+	previewWidth := (m.width / 2) - 3
 	
-	listWidth := (m.width / 2) - 2
-	previewWidth := (m.width / 2) - 4 // minus borders
-	
-	// Adjust list width
+	if !m.browser.showPreview {
+		listWidth = m.width - 4
+	}
+
+	// Update list size (layout constraint)
 	m.browser.mainList.SetWidth(listWidth)
-	m.browser.mainList.SetHeight(m.height - 6) // - input - status
-	
-	// Styles
-	activeBorder := highlightColor
-	inactiveBorder := lipgloss.Color("240")
-	
-	listStyle := docStyle.Copy().
-		Margin(0, 1).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(inactiveBorder)
+	m.browser.mainList.SetHeight(m.height - 4) // Reserve for Header + Status
 
-	if m.browser.activePane == 0 {
-		listStyle = listStyle.BorderForeground(activeBorder)
+	// --- Header Section ---
+	// Path with Modern Style
+	pathStyle := styleHeaderPath
+	if m.browser.activePane == 1 { // Input focused
+		pathStyle = pathStyle.Copy().Background(lipgloss.Color(ColorCyan)).Foreground(lipgloss.Color(ColorBackground))
 	}
 	
-	pathInputStyle := docStyle.Copy().Margin(0, 0, 0, 1). // Reduced margin to fit button
-	    Border(lipgloss.RoundedBorder()).
-	    BorderForeground(inactiveBorder)
-	
-	goBtnStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("255")).
-		Background(lipgloss.Color("240")).
-		Padding(0, 2).
-		Margin(0, 1).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(inactiveBorder)
-
+	// Top Bar: [ PATH ] ---------------- [ Mode ]
+	pathView := pathStyle.Render(m.browser.currentDir)
 	if m.browser.activePane == 1 {
-		pathInputStyle = pathInputStyle.BorderForeground(activeBorder)
-		goBtnStyle = goBtnStyle.BorderForeground(activeBorder).Background(highlightColor).Foreground(lipgloss.Color("#000000")).Bold(true)
-	}
-	
-	// Top Bar Logic: Path Input OR Command Palette
-	var topBar string
-	if m.browser.activePane == 2 {
-		// Command Palette Mode
-		cmdStyle := docStyle.Copy().
-			Margin(0, 0, 0, 1).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#FF79C6")). // Pink/Purple for command
-			Width(m.width - 4)
-		
-		topBar = cmdStyle.Render(m.browser.commandInput.View())
-	} else {
-		// Normal Path Input
-		topBar = lipgloss.JoinHorizontal(lipgloss.Top,
-			pathInputStyle.Render(m.browser.pathInput.View()),
-			goBtnStyle.Render("➜ Go"),
-		)
+		pathView = pathStyle.Render(m.browser.pathInput.View()) // Show input if active
+	} else if m.browser.activePane == 2 {
+		pathView = styleHeaderPath.Copy().Background(lipgloss.Color(ColorPink)).Render(m.browser.commandInput.View())
 	}
 
-	// Preview Pane
-	previewStyle := docStyle.Copy().
-		Width(previewWidth).
-		Height(m.height - 6).
-		Margin(0, 1).
-		Padding(1, 2).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(inactiveBorder)
-	
-	// Generate Preview Content
-	// If current item is image, maybe use some ASCII art placeholder or detail info?
-	var previewText string
-	i := m.browser.mainList.SelectedItem()
-	if i != nil {
-		item := i.(browserItem)
-		// Big Header
-		header := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("205")).
-			Bold(true).
-			Render(item.name)
-			
-		repeatCount := previewWidth - 4
-		if repeatCount < 0 {
-			repeatCount = 0
-		}
-		previewText = fmt.Sprintf("%s\n%s\n%s", header, strings.Repeat("─", repeatCount), m.browser.previewContent)
+	// Filter Indicator
+	filterView := ""
+	if m.browser.activePane == 2 {
+		filterView = styleStatusMode.Copy().Background(lipgloss.Color(ColorPink)).Render("COMMAND")
+	} else if m.browser.pathInput.Focused() {
+		filterView = styleStatusMode.Render("INPUT")
 	} else {
-		previewText = m.browser.previewContent
+		filterView = styleStatusMode.Copy().Background(lipgloss.Color(ColorComment)).Render("NORMAL")
+	}
+
+	// Filler for header
+	headerWidth := m.width - lipgloss.Width(pathView) - lipgloss.Width(filterView) - 2
+	if headerWidth < 0 { headerWidth = 0 }
+	filler := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorComment)).Render(strings.Repeat("─", headerWidth))
+	
+	topBar := lipgloss.JoinHorizontal(lipgloss.Center, pathView, filler, filterView)
+
+	// --- Browser View ---
+	
+	// List Pane Style
+	listPane := stylePane.Width(listWidth).Height(m.height - 4)
+	if m.browser.activePane == 0 {
+		listPane = stylePaneActive.Width(listWidth).Height(m.height - 4)
 	}
 	
-	// Render
+	listView := listPane.Render(m.browser.mainList.View())
+
+	// Right Column (Preview + Selected)
 	var browserView string
+	
 	if m.browser.showPreview {
-		browserView = lipgloss.JoinHorizontal(lipgloss.Top,
-			listStyle.Render(m.browser.mainList.View()),
-			previewStyle.Render(previewText),
-		)
+		// Preview Content (Top Right)
+		var previewText string
+		i := m.browser.mainList.SelectedItem()
+		if i != nil {
+			item := i.(browserItem)
+			header := styleBold.Render(item.name)
+			repeatCount := previewWidth - 4
+			if repeatCount < 0 { repeatCount = 0 }
+			divider := styleDim.Render(strings.Repeat("─", repeatCount))
+			previewText = fmt.Sprintf("%s\n%s\n%s", header, divider, m.browser.previewContent)
+		} else {
+			previewText = m.browser.previewContent
+		}
+		
+		// Split Right Pane Height
+		totalHeight := m.height - 4
+		previewHeight := totalHeight / 2
+		selectedHeight := totalHeight - previewHeight
+		
+		previewPane := stylePane.Width(previewWidth).Height(previewHeight).Render(previewText)
+		
+		// Selected Content (Bottom Right)
+		var selectedList []string
+		for path := range m.browser.selected {
+			selectedList = append(selectedList, filepath.Base(path))
+		}
+		if len(selectedList) == 0 {
+			selectedList = append(selectedList, styleDim.Render("(No images selected)"))
+		}
+		// Initial simple join
+		selectedContent := strings.Join(selectedList, "\n")
+		
+		selectedPane := stylePane.Width(previewWidth).Height(selectedHeight).
+			BorderForeground(lipgloss.Color(ColorSelectionBg)). // Distinct border for queue buffer
+			Render(styleBold.Foreground(lipgloss.Color(ColorGreen)).Render("Selected Images:") + "\n" + selectedContent)
+
+		rightColumn := lipgloss.JoinVertical(lipgloss.Left, previewPane, selectedPane)
+		
+		browserView = lipgloss.JoinHorizontal(lipgloss.Top, listView, rightColumn)
 	} else {
-		// Full Width List
-		m.browser.mainList.SetWidth(m.width - 4)
-		browserView = listStyle.Width(m.width - 4).Render(m.browser.mainList.View())
+		browserView = listPane.Width(m.width - 2).Render(m.browser.mainList.View())
 	}
+
+	// --- Status Bar ---
+	// [ Mode ] [ Sort ] [ Sel ] ... [ Keys ]
 	
-	// Status Bar
-	sortModeStr := "Name"
-	if m.browser.sortMode == 1 { sortModeStr = "Size" }
-	if m.browser.sortMode == 2 { sortModeStr = "Date" }
-	sortDir := "ASC"
-	if !m.browser.sortAsc { sortDir = "DESC" }
+	sortStr := "Name"
+	if m.browser.sortMode == 1 { sortStr = "Size" }
+	if m.browser.sortMode == 2 { sortStr = "Date" }
 	
-	statusText := fmt.Sprintf("Sel: %d | Sort: %s (%s) | [:] Cmd | [p] Preview | [m] Mark", 
-		len(m.browser.selected), sortModeStr, sortDir)
-	status := subtleStyle.Render(statusText)
+	statusLeft := fmt.Sprintf(" %s (%s) | Sel: %d | Rec: %v", sortStr, map[bool]string{true:"ASC", false:"DESC"}[m.browser.sortAsc], len(m.browser.selected), m.browser.recursive)
+	statusRight := "[:] Cmd [?] Help "
+	
+	// Align Right
+	statusWidth := m.width - lipgloss.Width(statusLeft) - lipgloss.Width(statusRight)
+	if statusWidth < 0 { statusWidth = 0 }
+	statusSpacer := strings.Repeat(" ", statusWidth)
+	
+	statusBar := styleStatusBar.Width(m.width).Render(statusLeft + statusSpacer + statusRight)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		topBar,
 		browserView,
-		lipgloss.NewStyle().Margin(0, 2).Render(status),
+		statusBar,
 	)
 }

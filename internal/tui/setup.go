@@ -102,10 +102,10 @@ func (m MainModel) viewSetup() string {
 
 	return fmt.Sprintf(
 		"\n%s\n\n%s\n\n%s",
-		titleStyle.Render("Welcome to TiniTUI"),
+		styleTitle.Render("Welcome to TiniTUI"),
 		"Please enter your TinyPNG API Key to get started.",
 		m.setup.textInput.View(),
-	) + "\n\n" + subtleStyle.Render("Press Esc to quit")
+	) + "\n\n" + styleDim.Render("Press Esc to quit")
 }
 
 var dot = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)

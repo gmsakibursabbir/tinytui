@@ -24,20 +24,7 @@ const (
 
 var (
 	// Styles
-	subtleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	
-	// Pink/Purple Gradient Aesthetic
-	highlightColor = lipgloss.Color("#FF7CCB") // Pink
-	primaryColor   = lipgloss.Color("#8888FF") // Purple
-	
-	titleStyle = lipgloss.NewStyle().
-		MarginLeft(1).
-		MarginRight(5).
-		Padding(0, 1).
-		Bold(true).
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Background(primaryColor)
-
+	// Styles
 	docStyle = lipgloss.NewStyle().Margin(1, 2)
 )
 
@@ -276,9 +263,10 @@ func (m MainModel) renderTopBar() string {
 	// Highlight current
 	// Simple string replacement for highlight based on state
 	// Highlight current
+	// Highlight current
 	// Use lipgloss for better highlighting
-	activeTabStyle := lipgloss.NewStyle().Foreground(highlightColor).Bold(true)
-	inactiveTabStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	activeTabStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Bold(true)
+	inactiveTabStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorComment))
 	
 	currentTabStr := func(name string, state SessionState) string {
 		if m.state == state {
@@ -295,7 +283,7 @@ func (m MainModel) renderTopBar() string {
 	)
 	
 	return lipgloss.JoinHorizontal(lipgloss.Center, 
-		titleStyle.Render("TiniTUI "+version.Version),
+		styleTitle.Render("TiniTUI "+version.Version),
 		"  ",
 		status,
 		" | ",
@@ -306,7 +294,7 @@ func (m MainModel) renderTopBar() string {
 }
 
 func (m MainModel) renderBottomBar() string {
-	return subtleStyle.Render("A: Add Files | R: Run | S: Settings | H: History | Q: Quit")
+	return styleDim.Render("A: Add Files | R: Run | S: Settings | H: History | Q: Quit")
 }
 
 // ---------------- STUBS -----------------

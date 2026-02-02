@@ -31,13 +31,14 @@ func newQueueModel() queueModel {
 	s := table.DefaultStyles()
 	s.Header = s.Header.
 		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240")).
+		BorderForeground(lipgloss.Color(ColorComment)).
 		BorderBottom(true).
-		Bold(false)
+		Bold(true).
+		Foreground(lipgloss.Color(ColorCyan))
 	s.Selected = s.Selected.
-		Foreground(lipgloss.Color("229")).
-		Background(lipgloss.Color("57")).
-		Bold(false)
+		Foreground(lipgloss.Color(ColorCyan)).
+		Background(lipgloss.Color(ColorSelectionBg)).
+		Bold(true)
 	t.SetStyles(s)
 
 	return queueModel{table: t}
@@ -123,19 +124,23 @@ func (m MainModel) viewQueue() string {
 		}
 	}
 	
-	stats := fmt.Sprintf("Processed: %d/%d", processed, total)
+	// Stats Line
+	stats := fmt.Sprintf(" Processed: %d/%d ", processed, total)
 	if savedBytes > 0 {
-		stats += fmt.Sprintf(" | Saved: %s", formatBytes(savedBytes))
+		stats += fmt.Sprintf("| Saved: %s ", formatBytes(savedBytes))
 	}
-	
-	footerStyle := lipgloss.NewStyle().
-		MarginTop(1).
-		Foreground(lipgloss.Color("241"))
+	statsView := styleStatusMode.Copy().Background(lipgloss.Color(ColorGreen)).Render(stats)
 
-	return docStyle.Render(
-		"Queue (" + fmt.Sprintf("%d", total) + " files)\n" +
-		"Press 'r' to start compression.\n\n" +
-		m.queue.table.View() + "\n" +
-		footerStyle.Render(stats),
+	// Ensure table dimensions
+	m.queue.table.SetWidth(m.width - 4)
+	m.queue.table.SetHeight(m.height - 6)
+	
+	// Create a view
+	tView := stylePaneActive.Width(m.width - 4).Height(m.height - 6).Render(m.queue.table.View())
+	
+	return lipgloss.JoinVertical(lipgloss.Left, 
+		lipgloss.JoinHorizontal(lipgloss.Center, styleHeaderPath.Render("Queue"), statsView),
+		tView,
+		styleDim.Render(" [R] Run | [D] Delete | [C] Clear Completed"),
 	)
 }
