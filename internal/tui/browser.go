@@ -201,93 +201,105 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.browser = newBrowserModel()
 	}
 
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "tab":
-			m.browser.activePane = (m.browser.activePane + 1) % 2
-			if m.browser.activePane == 1 {
-				m.browser.pathInput.Focus()
-			} else {
-				m.browser.pathInput.Blur()
-			}
-			return m, nil
-			
-		case "enter":
-			if m.browser.activePane == 1 {
-				// Path Input
+	// Handle Input Focus specifically
+	if m.browser.activePane == 1 {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "enter":
+				// Handle Go / Navigate
 				path := m.browser.pathInput.Value()
 				info, err := os.Stat(path)
 				if err == nil && info.IsDir() {
 					m.browser.currentDir = path
 					m.browser.scanDirectory()
 					m.browser.mainList.ResetSelected()
-					m.browser.pathInput.Blur() // Optional: return focus to list
-					m.browser.activePane = 0
+					m.browser.activePane = 0 // Switch focus to list
+					m.browser.pathInput.Blur()
 				}
-			} else {
-				// List Item
-				i := m.browser.mainList.SelectedItem()
-				if i != nil {
-					item := i.(browserItem)
-					if item.isDir {
-						// Enter Directory
-						m.browser.currentDir = item.path
-						m.browser.scanDirectory()
-						m.browser.mainList.ResetSelected()
-						m.browser.pathInput.SetValue(m.browser.currentDir)
+				return m, nil
+				
+			case "tab":
+				// Cycle focus
+				m.browser.activePane = 0
+				m.browser.pathInput.Blur()
+				return m, nil
+			
+			case "esc":
+				m.browser.activePane = 0
+				m.browser.pathInput.Blur()
+				return m, nil
+			}
+		}
+		
+		// If focused, pass all other messages to input and return
+		m.browser.pathInput, cmd = m.browser.pathInput.Update(msg)
+		return m, cmd
+	}
+
+	// Main List Handling
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "tab":
+			m.browser.activePane = 1
+			m.browser.pathInput.Focus()
+			return m, nil
+			
+		case "enter":
+			// List Item Enter
+			i := m.browser.mainList.SelectedItem()
+			if i != nil {
+				item := i.(browserItem)
+				if item.isDir {
+					m.browser.currentDir = item.path
+					m.browser.scanDirectory()
+					m.browser.mainList.ResetSelected()
+					m.browser.pathInput.SetValue(m.browser.currentDir)
+				} else {
+					if m.browser.selected[item.path] {
+						delete(m.browser.selected, item.path)
 					} else {
-						// Toggle File Selection
-						if m.browser.selected[item.path] {
-							delete(m.browser.selected, item.path)
-						} else {
-							m.browser.selected[item.path] = true
-						}
-						m.browser.updateListItems()
+						m.browser.selected[item.path] = true
 					}
+					m.browser.updateListItems()
 				}
 			}
 			
 		case "right", "l":
 			// If Dir, enter it like Yazi
-			if m.browser.activePane == 0 {
-				i := m.browser.mainList.SelectedItem()
-				if i != nil {
-					item := i.(browserItem)
-					if item.isDir {
-						m.browser.currentDir = item.path
-						m.browser.scanDirectory()
-						m.browser.mainList.ResetSelected()
-						m.browser.pathInput.SetValue(m.browser.currentDir)
-					}
+			if i := m.browser.mainList.SelectedItem(); i != nil {
+				item := i.(browserItem)
+				if item.isDir {
+					m.browser.currentDir = item.path
+					m.browser.scanDirectory()
+					m.browser.mainList.ResetSelected()
+					m.browser.pathInput.SetValue(m.browser.currentDir)
 				}
 			}
 			
 		case "left", "h", "backspace":
-			if m.browser.activePane == 0 {
-				parent := filepath.Dir(m.browser.currentDir)
-				if parent != m.browser.currentDir {
-					m.browser.currentDir = parent
-					m.browser.scanDirectory()
-					m.browser.mainList.ResetSelected() // Ideally find "previous" dir
-					m.browser.pathInput.SetValue(m.browser.currentDir)
-				}
+			// Go Up
+			parent := filepath.Dir(m.browser.currentDir)
+			if parent != m.browser.currentDir {
+				m.browser.currentDir = parent
+				m.browser.scanDirectory()
+				m.browser.mainList.ResetSelected() // Ideally find "previous" dir
+				m.browser.pathInput.SetValue(m.browser.currentDir)
 			}
 
 		case " ":
-			if m.browser.activePane == 0 {
-				i := m.browser.mainList.SelectedItem()
-				if i != nil {
-					item := i.(browserItem)
-					path := item.path
-					if item.name != ".." {
-						if m.browser.selected[path] {
-							delete(m.browser.selected, path)
-						} else {
-							m.browser.selected[path] = true
-						}
-						m.browser.updateListItems()
+			// Toggle
+			if i := m.browser.mainList.SelectedItem(); i != nil {
+				item := i.(browserItem)
+				path := item.path
+				if item.name != ".." {
+					if m.browser.selected[path] {
+						delete(m.browser.selected, path)
+					} else {
+						m.browser.selected[path] = true
 					}
+					m.browser.updateListItems()
 				}
 			}
 			
@@ -305,8 +317,6 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.browser.updateListItems()
 
 		case "a":
-		    if m.browser.activePane == 1 { break }
-		    
 			var paths []string
 			// If nothing selected, add current item if file
 			if len(m.browser.selected) == 0 {
@@ -343,15 +353,11 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.browser.mainList.SetHeight(m.height - 6) // - input - status
 	}
 	
-	if m.browser.activePane == 1 {
-		m.browser.pathInput, cmd = m.browser.pathInput.Update(msg)
-		cmds = append(cmds, cmd)
-	} else {
-		m.browser.mainList, cmd = m.browser.mainList.Update(msg)
-		cmds = append(cmds, cmd)
-		// Update preview after selection change
-		m.browser.updatePreview()
-	}
+	// Pass updates to list
+	m.browser.mainList, cmd = m.browser.mainList.Update(msg)
+	cmds = append(cmds, cmd)
+	// Update preview after selection change
+	m.browser.updatePreview()
 	
 	return m, tea.Batch(cmds...)
 }
@@ -383,13 +389,27 @@ func (m MainModel) viewBrowser() string {
 		listStyle = listStyle.BorderForeground(activeBorder)
 	}
 	
-	pathInputStyle := docStyle.Copy().Margin(0, 1).
+	pathInputStyle := docStyle.Copy().Margin(0, 0, 0, 1). // Reduced margin to fit button
 	    Border(lipgloss.RoundedBorder()).
 	    BorderForeground(inactiveBorder)
 	
+	goBtnStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("255")).
+		Background(lipgloss.Color("240")).
+		Padding(0, 2).
+		Margin(0, 1).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(inactiveBorder)
+
 	if m.browser.activePane == 1 {
 		pathInputStyle = pathInputStyle.BorderForeground(activeBorder)
+		goBtnStyle = goBtnStyle.BorderForeground(activeBorder).Background(highlightColor).Foreground(lipgloss.Color("#000000")).Bold(true)
 	}
+	
+	topBar := lipgloss.JoinHorizontal(lipgloss.Top,
+		pathInputStyle.Render(m.browser.pathInput.View()),
+		goBtnStyle.Render("➜ Go"),
+	)
 
 	// Preview Pane
 	previewStyle := docStyle.Copy().
@@ -414,7 +434,7 @@ func (m MainModel) viewBrowser() string {
 	status := subtleStyle.Render(statusText)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		pathInputStyle.Render(m.browser.pathInput.View()),
+		topBar,
 		browserView,
 		lipgloss.NewStyle().Margin(0, 2).Render(status),
 	)
