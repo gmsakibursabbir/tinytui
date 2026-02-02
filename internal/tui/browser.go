@@ -22,14 +22,24 @@ type browserModel struct {
 	
 	mainList   list.Model
 	pathInput  textinput.Model
+	commandInput textinput.Model
 	
-	activePane int // 0 = MainList, 1 = PathInput (Preview is passive)
+	activePane int // 0 = MainList, 1 = PathInput (Preview is passive), 2 = CommandPalette
 	
 	currentEntries []fs.DirEntry // Cache
 	selected       map[string]bool
 	recursive      bool
-	err            error
 	
+	// Power User Features
+	sortMode    int  // 0=Name, 1=Size, 2=ModTime
+	sortAsc     bool
+	showPreview bool
+	
+	history      []string
+	historyIndex int
+	bookmarks    map[string]string
+	
+	err            error
 	previewContent string // Cached preview string for currently selected item
 }
 
@@ -93,12 +103,25 @@ func newBrowserModel() browserModel {
 	ti.Width = 50
 	ti.SetValue(cwd)
 
+	ci := textinput.New()
+	ci.Placeholder = "Command > (copy, move, delete...)"
+	ci.CharLimit = 100
+	ci.Width = 50
+	ci.Prompt = ":"
+
 	m := browserModel{
-		currentDir: cwd,
-		mainList:   l,
-		pathInput:  ti,
-		activePane: 0,
-		selected:   make(map[string]bool),
+		currentDir:   cwd,
+		mainList:     l,
+		pathInput:    ti,
+		commandInput: ci,
+		activePane:   0,
+		selected:     make(map[string]bool),
+		sortMode:     0,    // Name
+		sortAsc:      true, // Ascending
+		showPreview:  true,
+		history:      []string{cwd},
+		historyIndex: 0,
+		bookmarks:    make(map[string]string),
 	}
 	m.scanDirectory()
 	return m
@@ -112,12 +135,37 @@ func (b *browserModel) scanDirectory() {
 		return
 	}
 	
-	// Sort: Directories first, then Files
+	// Sort
 	sort.Slice(entries, func(i, j int) bool {
+		// Always Directories First
 		if entries[i].IsDir() != entries[j].IsDir() {
 			return entries[i].IsDir()
 		}
-		return entries[i].Name() < entries[j].Name()
+		
+		// Then Sort By Mode
+		
+		switch b.sortMode {
+		case 1: // Size
+			iInfo, _ := entries[i].Info()
+			jInfo, _ := entries[j].Info()
+			if iInfo != nil && jInfo != nil {
+				return iInfo.Size() < jInfo.Size() == b.sortAsc
+			}
+		case 2: // Date
+			iInfo, _ := entries[i].Info()
+			jInfo, _ := entries[j].Info()
+			if iInfo != nil && jInfo != nil {
+				return iInfo.ModTime().Before(jInfo.ModTime()) == b.sortAsc
+			}
+		default: // Name (0)
+			// String comparison for Name
+			less := entries[i].Name() < entries[j].Name()
+			if !b.sortAsc {
+				return !less
+			}
+			return less
+		}
+		return entries[i].Name() < entries[j].Name() // Fallback
 	})
 	
 	b.currentEntries = entries
@@ -224,6 +272,60 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Command Palette Handling
+	if m.browser.activePane == 2 {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "enter":
+				// Execute Command
+				val := m.browser.commandInput.Value()
+				// Simple parser
+				parts := strings.Fields(val)
+				if len(parts) > 0 {
+					cmdStr := parts[0]
+					// args := parts[1:]
+					
+					switch cmdStr {
+					case "copy", "cp":
+						// Copy logic (mock)
+						// In real power user update: implement clipboard
+					case "delete", "rm":
+						// Delete selected
+						for p := range m.browser.selected {
+							os.RemoveAll(p) // Dangerous but requested "Power User"
+						}
+						m.browser.selected = make(map[string]bool)
+						m.browser.scanDirectory()
+					case "mkdir":
+						if len(parts) > 1 {
+							os.MkdirAll(filepath.Join(m.browser.currentDir, parts[1]), 0755)
+							m.browser.scanDirectory()
+						}
+					case "touch":
+						if len(parts) > 1 {
+							f, _ := os.Create(filepath.Join(m.browser.currentDir, parts[1]))
+							f.Close()
+							m.browser.scanDirectory()
+						}
+					}
+				}
+				
+				m.browser.commandInput.SetValue("")
+				m.browser.activePane = 0
+				m.browser.commandInput.Blur()
+				return m, nil
+				
+			case "esc":
+				m.browser.activePane = 0
+				m.browser.commandInput.Blur()
+				return m, nil
+			}
+		}
+		m.browser.commandInput, cmd = m.browser.commandInput.Update(msg)
+		return m, cmd
+	}
+
 	// Main List Handling
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -239,6 +341,13 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if i != nil {
 				item := i.(browserItem)
 				if item.isDir {
+					// Push History
+					if m.browser.historyIndex+1 < len(m.browser.history) {
+						m.browser.history = m.browser.history[:m.browser.historyIndex+1]
+					}
+					m.browser.history = append(m.browser.history, item.path)
+					m.browser.historyIndex = len(m.browser.history) - 1
+
 					m.browser.currentDir = item.path
 					m.browser.scanDirectory()
 					m.browser.mainList.ResetSelected()
@@ -265,10 +374,16 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			
-		case "left", "h", "backspace":
 			// Go Up
 			parent := filepath.Dir(m.browser.currentDir)
 			if parent != m.browser.currentDir {
+				// Push History
+				if m.browser.historyIndex+1 < len(m.browser.history) {
+					m.browser.history = m.browser.history[:m.browser.historyIndex+1]
+				}
+				m.browser.history = append(m.browser.history, parent)
+				m.browser.historyIndex = len(m.browser.history) - 1
+				
 				m.browser.currentDir = parent
 				m.browser.scanDirectory()
 				m.browser.mainList.ResetSelected() // Ideally find "previous" dir
@@ -303,6 +418,86 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.browser.updateListItems()
 
+		case "I":
+			// Invert Selection
+			for _, it := range m.browser.mainList.Items() {
+				item := it.(browserItem)
+				if !item.isDir && item.name != ".." {
+					if m.browser.selected[item.path] {
+						delete(m.browser.selected, item.path)
+					} else {
+						m.browser.selected[item.path] = true
+					}
+				}
+			}
+			m.browser.updateListItems()
+
+		case "s":
+			// Cycle Sort Mode
+			m.browser.sortMode = (m.browser.sortMode + 1) % 3
+			m.browser.scanDirectory()
+			
+		case "S":
+			// Toggle Sort Asc/Desc
+			m.browser.sortAsc = !m.browser.sortAsc
+			m.browser.scanDirectory()
+
+		case "p":
+			// Toggle Preview
+			m.browser.showPreview = !m.browser.showPreview
+			// Force window resize event logic to recalculate widths
+			m.browser.dims.width = m.width // trigger update next cycle or manually set widths here
+			listWidth := m.width - 2
+			if m.browser.showPreview {
+				listWidth = (m.width / 2) - 2
+			}
+			m.browser.mainList.SetWidth(listWidth)
+
+		case "i":
+			// Focus Input
+			m.browser.activePane = 1
+			m.browser.pathInput.Focus()
+			return m, nil
+
+		case "m":
+			// Mark/Bookmark
+			if m.browser.currentDir != "" {
+				m.browser.bookmarks[filepath.Base(m.browser.currentDir)] = m.browser.currentDir
+			}
+
+		// case "'":
+		// 	// Jump to bookmark (Simple Implementation: just go to first bookmark for now or cycle?
+		// 	// Real picker needs overlay. For MVP, let's skip complex UI or just cycle.)
+		// 	// Let's implement cycle for now.
+		// 	for _, path := range m.browser.bookmarks {
+		// 		m.browser.currentDir = path
+		// 		m.browser.scanDirectory()
+		// 		break 
+		// 	}
+
+		case "alt+left":
+			// Back History
+			if m.browser.historyIndex > 0 {
+				m.browser.historyIndex--
+				if m.browser.historyIndex < len(m.browser.history) {
+					m.browser.currentDir = m.browser.history[m.browser.historyIndex]
+					m.browser.scanDirectory()
+				}
+			}
+
+		case "alt+right":
+			// Forward History
+			if m.browser.historyIndex < len(m.browser.history)-1 {
+				m.browser.historyIndex++
+				m.browser.currentDir = m.browser.history[m.browser.historyIndex]
+				m.browser.scanDirectory()
+			}
+		
+		case "d":
+			// Switch to Dashboard
+			m.state = StateQueue
+			return m, nil
+
 		case "a":
 			var paths []string
 			// If nothing selected, add current item if file
@@ -330,6 +525,11 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.browser.updateListItems()
 				}
 			}
+		
+		case ":":
+			m.browser.activePane = 2
+			m.browser.commandInput.Focus()
+			return m, nil
 		}
 	case tea.WindowSizeMsg:
 		m.browser.dims.width = m.width
@@ -393,10 +593,24 @@ func (m MainModel) viewBrowser() string {
 		goBtnStyle = goBtnStyle.BorderForeground(activeBorder).Background(highlightColor).Foreground(lipgloss.Color("#000000")).Bold(true)
 	}
 	
-	topBar := lipgloss.JoinHorizontal(lipgloss.Top,
-		pathInputStyle.Render(m.browser.pathInput.View()),
-		goBtnStyle.Render("➜ Go"),
-	)
+	// Top Bar Logic: Path Input OR Command Palette
+	var topBar string
+	if m.browser.activePane == 2 {
+		// Command Palette Mode
+		cmdStyle := docStyle.Copy().
+			Margin(0, 0, 0, 1).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#FF79C6")). // Pink/Purple for command
+			Width(m.width - 4)
+		
+		topBar = cmdStyle.Render(m.browser.commandInput.View())
+	} else {
+		// Normal Path Input
+		topBar = lipgloss.JoinHorizontal(lipgloss.Top,
+			pathInputStyle.Render(m.browser.pathInput.View()),
+			goBtnStyle.Render("➜ Go"),
+		)
+	}
 
 	// Preview Pane
 	previewStyle := docStyle.Copy().
@@ -409,15 +623,43 @@ func (m MainModel) viewBrowser() string {
 	
 	// Generate Preview Content
 	// If current item is image, maybe use some ASCII art placeholder or detail info?
-	previewText := m.browser.previewContent
+	var previewText string
+	i := m.browser.mainList.SelectedItem()
+	if i != nil {
+		item := i.(browserItem)
+		// Big Header
+		header := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("205")).
+			Bold(true).
+			Render(item.name)
+			
+		previewText = fmt.Sprintf("%s\n%s\n%s", header, strings.Repeat("─", previewWidth-4), m.browser.previewContent)
+	} else {
+		previewText = m.browser.previewContent
+	}
 	
 	// Render
-	browserView := lipgloss.JoinHorizontal(lipgloss.Top,
-		listStyle.Render(m.browser.mainList.View()),
-		previewStyle.Render(previewText),
-	)
+	var browserView string
+	if m.browser.showPreview {
+		browserView = lipgloss.JoinHorizontal(lipgloss.Top,
+			listStyle.Render(m.browser.mainList.View()),
+			previewStyle.Render(previewText),
+		)
+	} else {
+		// Full Width List
+		m.browser.mainList.SetWidth(m.width - 4)
+		browserView = listStyle.Width(m.width - 4).Render(m.browser.mainList.View())
+	}
 	
-	statusText := fmt.Sprintf("Selected: %d | Recursive: %v (X) | [Space] Toggle | [Enter/Right] Enter | [Back/Left] Up", len(m.browser.selected), m.browser.recursive)
+	// Status Bar
+	sortModeStr := "Name"
+	if m.browser.sortMode == 1 { sortModeStr = "Size" }
+	if m.browser.sortMode == 2 { sortModeStr = "Date" }
+	sortDir := "ASC"
+	if !m.browser.sortAsc { sortDir = "DESC" }
+	
+	statusText := fmt.Sprintf("Sel: %d | Sort: %s (%s) | [:] Cmd | [p] Preview | [m] Mark", 
+		len(m.browser.selected), sortModeStr, sortDir)
 	status := subtleStyle.Render(statusText)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
