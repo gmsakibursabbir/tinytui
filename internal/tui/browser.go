@@ -44,20 +44,26 @@ type browserItem struct {
 }
 
 func (i browserItem) Title() string {
-	icon := getIcon(i.name, i.isDir)
+	var sb strings.Builder
 	
-	prefix := "[ ] "
+	// Selection Checkbox
 	if i.selected {
-		prefix = "[✔] "
+		sb.WriteString(" [✔] ") // Strong check
+	} else {
+		sb.WriteString(" [ ] ")
 	}
 	
-	// Highlight directory names?
-	name := i.name
+	// Icon
+	sb.WriteString(getIcon(i.name, i.isDir) + " ")
+	
+	// Name
 	if i.isDir {
-		name = name + "/"
+		sb.WriteString(i.name + "/")
+	} else {
+		sb.WriteString(i.name)
 	}
 	
-	return fmt.Sprintf("%s%s %s", prefix, icon, name)
+	return sb.String()
 }
 
 func (i browserItem) Description() string {
@@ -155,6 +161,7 @@ func (b *browserModel) updateListItems() {
 	}
 	
 	b.mainList.SetItems(items)
+	b.mainList.Title = fmt.Sprintf("📂 %s", b.currentDir)
 	b.updatePreview()
 }
 
