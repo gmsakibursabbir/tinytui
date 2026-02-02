@@ -50,12 +50,10 @@ func IsNewer(current, latest string) bool {
     // Basic comparison assuming vX.Y.Z
     // For robust comparison we might want a semver lib, but text compare works for strict format
     // Ignoring 'v' prefix
+    // Ignoring 'v' prefix
     c := strings.TrimPrefix(current, "v")
     l := strings.TrimPrefix(latest, "v")
-    return c != l && l > c // Simple lexicographical check (flawed if 1.10 < 1.9, but assuming standard)
-	// Actually no, 1.10 < 1.9 is false, but 1.2 vs 1.10 -> 1.2 > 1.10 (string wise) is WRONG.
-	// We need meaningful split.
-	return compareVersions(c, l)
+    return compareVersions(c, l)
 }
 
 func compareVersions(v1, v2 string) bool {
@@ -81,9 +79,9 @@ func Update(release *Release) error {
 	goOS := runtime.GOOS
 	goArch := runtime.GOARCH
 
-	// Expected name pattern: tinytui-{os}-{arch}
-	// e.g. tinytui-linux-amd64
-	targetName := fmt.Sprintf("tinytui-%s-%s", goOS, goArch)
+	// Expected name pattern: tinitui-{os}-{arch}
+	// e.g. tinitui-linux-amd64
+	targetName := fmt.Sprintf("tinitui-%s-%s", goOS, goArch)
 	if goOS == "windows" {
 		targetName += ".exe"
 	}
