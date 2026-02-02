@@ -7,15 +7,24 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tinytui/tinitui/internal/config"
 	"github.com/tinytui/tinitui/internal/tui"
+	"github.com/tinytui/tinitui/internal/version"
 )
 
-var cfg *config.Config
+var (
+	cfg         *config.Config
+	showVersion bool
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "tinitui",
 	Short: "TiniTUI is a TUI for compressing images via TinyPNG",
 	Long:  `A modern, beautiful Terminal User Interface for compressing images using the TinyPNG API.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if showVersion {
+			fmt.Printf("tinitui version %s\n", version.Version)
+			return
+		}
+
 		// Default action: Run TUI
 		// Pass cfg to TUI
 		tui.Start(cfg)
@@ -31,7 +40,7 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	// Flags for config might go here
+	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "Show version information")
 }
 
 func initConfig() {

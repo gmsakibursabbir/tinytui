@@ -82,12 +82,30 @@ func (m MainModel) updateProgress(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	
-	// Pipeline update?
-	// We need to listen to pipeline.Updates() channel in a tea.Cmd
+	case *pipeline.Job:
+		if m.progress.active {
+			// Update stats
+			// We need access to all jobs to calc total/completed?
+			// Or pipeline provides stats?
+			// Pipeline.Jobs() returns all.
+			jobs := m.pipeline.Jobs()
+			total := len(jobs)
+			completed := 0
+			for _, j := range jobs {
+				if j.Status == pipeline.StatusDone || j.Status == pipeline.StatusFailed {
+					completed++
+				}
+			}
+			m.progress.total = total
+			m.progress.completed = completed
+			
+			if completed == total && total > 0 {
+				m.progress.done = true
+				m.state = StateHistory // Auto switch to history? Or just show done.
+				// Let's stay in Compress but show Done.
+			}
+		}
 	}
-	
-	// Check pipeline status via channel subscription?
-	// We need a specific Cmd to wait for pipeline updates
 	
 	return m, tea.Batch(cmds...)
 }

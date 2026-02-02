@@ -8,12 +8,21 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tinytui/tinitui/internal/config"
+	"github.com/tinytui/tinitui/internal/updater"
+	"github.com/tinytui/tinitui/internal/version"
 )
 
 type settingsModel struct {
 	cursor  int
 	inputs  []textinput.Model // For API Key
 	editing bool              // Are we editing a text input?
+	
+	// Update state
+	checkingUpdate bool
+	updateAvailable bool
+	latestVersion  string
+	updateStatus   string // "Checking...", "Up to date", "Downloading..."
+	release        *updater.Release
 }
 
 func newSettingsModel() settingsModel {
@@ -36,17 +45,42 @@ func (m MainModel) syncSettingsInputs() {
 	}
 }
 
+func checkUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		latest, release, err := updater.GetLatestVersion()
+		if err != nil {
+			return updateCheckMsg{err: err}
+		}
+		return updateCheckMsg{latest: latest, release: release}
+	}
+}
+
+type updateCheckMsg struct {
+	latest  string
+	release *updater.Release
+	err     error
+}
+
+type updateProgressMsg struct {
+	err error
+}
+
+func performUpdateCmd(release *updater.Release) tea.Cmd {
+	return func() tea.Msg {
+		err := updater.Update(release)
+		return updateProgressMsg{err: err}
+	}
+}
+
 func (m MainModel) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Options:
-	// 0. API Key (TextInput)
-	// 1. Concurrency (1-4)
-	// 2. Mascot Type (panda, waifu1, waifu2)
-	// 3. Output Mode (replace, directory)
-	// 4. Preserve Metadata (bool)
-	// 5. Back
+	// ... (Same as before)
+	// 5. Check for Updates (or Install Update)
+	// 6. Back
 
 	// If editing text input
 	if m.settings.editing {
+		// ... (Same input handling)
 		var cmd tea.Cmd
 		if m.settings.cursor == 0 {
 			m.settings.inputs[0], cmd = m.settings.inputs[0].Update(msg)
@@ -70,11 +104,11 @@ func (m MainModel) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			m.settings.cursor--
 			if m.settings.cursor < 0 {
-				m.settings.cursor = 5
+				m.settings.cursor = 6
 			}
 		case "down", "j":
 			m.settings.cursor++
-			if m.settings.cursor > 5 {
+			if m.settings.cursor > 6 {
 				m.settings.cursor = 0
 			}
 		case "enter", " ":
@@ -88,8 +122,6 @@ func (m MainModel) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.config.Concurrency > 4 {
 					m.config.Concurrency = 1
 				}
-				// Update pipeline? 
-				// m.pipeline.Configure(m.config.Concurrency) // Main model should do this or we do it here
 				if m.pipeline != nil {
 					m.pipeline.Configure(m.config.Concurrency)
 				}
@@ -104,7 +136,6 @@ func (m MainModel) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				idx = (idx + 1) % len(types)
 				m.config.MascotType = types[idx]
-				// Also ensure Mascot is On if we switch type?
 				m.config.Mascot = config.MascotOn
 			case 3: // Output Mode
 				if m.config.OutputMode == "replace" {
@@ -114,12 +145,48 @@ func (m MainModel) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case 4: // Metadata
 				m.config.Metadata = !m.config.Metadata
-			case 5: // Back
+			case 5: // Update
+				if m.settings.updateAvailable && m.settings.release != nil {
+					// Install
+					m.settings.updateStatus = "Downloading & Installing..."
+					return m, performUpdateCmd(m.settings.release)
+				}
+
+				if !m.settings.checkingUpdate {
+					m.settings.checkingUpdate = true
+					m.settings.updateStatus = "Checking..."
+					return m, checkUpdateCmd()
+				}
+			case 6: // Back
 				m.state = StateBrowser
 			}
 			m.config.Save()
 		}
+	
+	case updateCheckMsg:
+		m.settings.checkingUpdate = false
+		if msg.err != nil {
+			m.settings.updateStatus = "Error: " + msg.err.Error()
+		} else {
+			if updater.IsNewer(version.Version, msg.latest) {
+				m.settings.updateAvailable = true
+				m.settings.latestVersion = msg.latest
+				m.settings.release = msg.release // Store release
+				m.settings.updateStatus = fmt.Sprintf("Update available: %s (Press Enter to Install)", msg.latest)
+			} else {
+				m.settings.updateStatus = "Up to date (" + version.Version + ")"
+			}
+		}
+		
+	case updateProgressMsg:
+		if msg.err != nil {
+			m.settings.updateStatus = "Failed: " + msg.err.Error()
+		} else {
+			m.settings.updateStatus = "Updated! Restart app."
+			m.settings.updateAvailable = false // disable further clicks
+		}
 	}
+	
 	return m, nil
 }
 
@@ -169,8 +236,15 @@ func (m MainModel) viewSettings() string {
 	if m.config.Metadata { metaVal = "ON" }
 	renderItem(4, "Preserve Metadata", metaVal)
 
-	// 5 Back
-	renderItem(5, "Back", "")
+	// 5 Update
+	updateVal := "Check for Updates"
+	if m.settings.updateStatus != "" {
+		updateVal = m.settings.updateStatus
+	}
+	renderItem(5, "Software Update", updateVal)
+
+	// 6 Back
+	renderItem(6, "Back", "")
 
 	help := "(Space/Enter to change)"
 	if m.settings.editing {

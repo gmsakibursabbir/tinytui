@@ -73,7 +73,7 @@ func InitialModel(cfg *config.Config) MainModel {
 func (m MainModel) Init() tea.Cmd {
 	return tea.Batch(
 		tea.EnterAltScreen,
-		// Init checks?
+		waitForPipeline(m.pipeline),
 	)
 }
 
@@ -125,23 +125,49 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	}
 	
-	// Route based on state
+	var cmd tea.Cmd
+	
+	// Handle types
+	switch msg.(type) {
+	case *pipeline.Job:
+		// Forward to progress model regardless of state, 
+	}
+
+	// Refactored State handling with type assertions
 	switch m.state {
 	case StateSetup:
-		return m.updateSetup(msg)
+		newModel, newCmd := m.updateSetup(msg)
+		m = newModel.(MainModel)
+		cmd = newCmd
 	case StateBrowser:
-		return m.updateBrowser(msg)
+		newModel, newCmd := m.updateBrowser(msg)
+		m = newModel.(MainModel)
+		cmd = newCmd
 	case StateQueue:
-		return m.updateQueue(msg)
+		newModel, newCmd := m.updateQueue(msg)
+		m = newModel.(MainModel)
+		cmd = newCmd
 	case StateCompress:
-		return m.updateProgress(msg)
+		newModel, newCmd := m.updateProgress(msg)
+		m = newModel.(MainModel)
+		cmd = newCmd
 	case StateHistory:
-		return m.updateHistory(msg)
+		newModel, newCmd := m.updateHistory(msg)
+		m = newModel.(MainModel)
+		cmd = newCmd
 	case StateSettings:
-		return m.updateSettings(msg)
+		newModel, newCmd := m.updateSettings(msg)
+		m = newModel.(MainModel)
+		cmd = newCmd
 	}
 	
-	return m, nil
+	// Handle pipeline updates globally if needed, or ensure waitForPipeline is re-dispatched
+	if _, ok := msg.(*pipeline.Job); ok {
+		// Re-dispatch wait
+		return m, tea.Batch(cmd, waitForPipeline(m.pipeline))
+	}
+	
+	return m, cmd
 }
 
 func (m MainModel) View() string {
