@@ -189,10 +189,32 @@ func (m MainModel) View() string {
 	topBar := m.renderTopBar()
 	bottomBar := m.renderBottomBar()
 	
+	// Mascot Logic
+	mascot := ""
+	mascotWidth := 0
+	if m.config.ShouldShowMascot(m.width) {
+		mascot = m.renderMascot()
+		mascotWidth = lipgloss.Width(mascot) + 2 // Margin
+	}
+	
+	// Layout Content
 	content := ""
+	
+	// Temporarily adjust width for content rendering if mascot is showing
+	// We need to mutate m.width for the view generation, effectively passing a constrained width to children
+	// A cleaner way is to pass width to view methods, but for now we simply substract and restore or handle inside views.
+	// Since viewBrowser uses m.width directly, we have to hack specific width override or change viewBrowser to accept width.
+	// Changing viewBrowser signature is big.
+	// Let's modify m.width locally for the switch? No, m is by value receiver in View, so modifying it is safe for this call stack!
+	effectiveWidth := m.width
+	if mascot != "" {
+		effectiveWidth = m.width - mascotWidth
+	}
+	// Update m width locally
+	m.width = effectiveWidth 
+	
 	switch m.state {
 	case StateSetup:
-		// Setup takes full screen logic usually, but let's keep it simple
 		content = m.viewSetup()
 	case StateBrowser:
 		content = m.viewBrowser()
@@ -208,32 +230,35 @@ func (m MainModel) View() string {
 		content = fmt.Sprintf("State: %v", m.state)
 	}
 	
-	// Mascot
-	mascot := ""
-	if m.config.ShouldShowMascot(m.width) {
-		mascot = m.renderMascot()
-	}
-	
-	// Layout
-	// We can place mascot on the right side of content or bottom?
-	// Prompt says "Must not block UI".
-	// Let's put it in bottom right corner of content area if space permits.
-	// Or just append it to content.
-	
-	// Simple append for now
 	if mascot != "" {
-		// Use JoinHorizontal with content?
-		// Content usually takes full width in docStyle.
-		// Let's put mascot above bottom bar?
 		content = lipgloss.JoinHorizontal(lipgloss.Top, content, mascot)
 	}
 
 	if m.showingHelp {
-		// Simple overlay
-		helpText := docStyle.Render("Help:\n\nGlobal:\n A - Add Files\n R - Run\n S - Settings\n H - History\n W - Toggle Mascot\n ? - Toggle Help\n Q - Quit\n\nBrowser:\n Space - Select\n X - Toggle Recursive\n A - Add Selection\n\nQueue:\n Space - Select\n D - Delete\n C - Clear Completed\n\nCompress:\n P - Pause/Resume\n X - Cancel")
-		// replace content? or overlay?
-		// simple replacement for now
-		content = helpText
+		// Use a nice overlay
+		helpPane := stylePane.
+			BorderForeground(lipgloss.Color(ColorPink)).
+			Width(60).
+			Render(
+			styleBold.Foreground(lipgloss.Color(ColorPink)).Render("Help & Keys") + "\n\n" +
+			" Global:\n" + 
+			"  [A] Add Files   [R] Run\n" +
+			"  [S] Settings    [H] History\n" +
+			"  [W] Mascot      [?] Close Help\n" +
+			"  [Q] Quit\n\n" +
+			" Browser:\n" +
+			"  [Space] Select  [A] Batch Select\n" +
+			"  [:] Command     [p] Preview\n" +
+			"  [s] Sort        [S] Sort Dir\n\n" +
+			" Queue:\n" +
+			"  [d] Remove      [c] Clear",
+		)
+		
+		// Center overlay
+		content = lipgloss.Place(m.width + mascotWidth, m.height - 2,
+			lipgloss.Center, lipgloss.Center,
+			helpPane,
+		)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, topBar, content, bottomBar)
