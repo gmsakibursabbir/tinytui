@@ -284,28 +284,30 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m MainModel) viewBrowser() string {
-	leftStyle := docStyle.Copy().Width(m.width/2 - 4)
-	rightStyle := docStyle.Copy().Width(m.width/2 - 4)
+    // Compact layout: margin 0 or 1
+	leftStyle := docStyle.Copy().Width(m.width/2 - 2).Margin(0, 1)
+	rightStyle := docStyle.Copy().Width(m.width/2 - 2).Margin(0, 1)
 	
-	borderColor := lipgloss.Color("62") // Purple
-	
+	activeBorder := lipgloss.Color("62") // Purple
+	inactiveBorder := lipgloss.Color("240") // Grey
+
 	if m.browser.activePane == 0 {
-		leftStyle = leftStyle.Border(lipgloss.DoubleBorder()).BorderForeground(borderColor)
-		rightStyle = rightStyle.Border(lipgloss.NormalBorder())
+		leftStyle = leftStyle.Border(lipgloss.RoundedBorder()).BorderForeground(activeBorder)
+		rightStyle = rightStyle.Border(lipgloss.RoundedBorder()).BorderForeground(inactiveBorder)
 	} else {
-		leftStyle = leftStyle.Border(lipgloss.NormalBorder())
-		rightStyle = rightStyle.Border(lipgloss.DoubleBorder()).BorderForeground(borderColor)
+		leftStyle = leftStyle.Border(lipgloss.RoundedBorder()).BorderForeground(inactiveBorder)
+		rightStyle = rightStyle.Border(lipgloss.RoundedBorder()).BorderForeground(activeBorder)
 	}
 
 	// Status line
-	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	status := statusStyle.Render(fmt.Sprintf("Selected: %d | Recursive: %v (X) | [Space/Ent] Toggle | [A] Add | [Arrow/Tab] Move", len(m.browser.selected), m.browser.recursive))
+	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Margin(0, 2)
+	status := statusStyle.Render(fmt.Sprintf("Selected: %d | Recursive: %v (X) | [Space/Ent] Toggle | [A] Add | [Esc] Dashboard", len(m.browser.selected), m.browser.recursive))
 	
 	return lipgloss.JoinVertical(lipgloss.Left,
 		lipgloss.JoinHorizontal(lipgloss.Top,
 			leftStyle.Render(m.browser.dirs.View()),
 			rightStyle.Render(m.browser.files.View()),
 		),
-		docStyle.Render(status),
+		status,
 	)
 }

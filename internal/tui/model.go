@@ -94,6 +94,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "h":
 			m.state = StateHistory
+		case "esc":
+			m.state = StateQueue
 		case "r":
 			// If we have jobs, start
 			if len(m.pipeline.Jobs()) > 0 {
