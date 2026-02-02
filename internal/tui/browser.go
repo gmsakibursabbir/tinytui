@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,20 +15,30 @@ import (
 
 type browserModel struct {
 	currentDir string
+	dims       struct { width, height int }
+	
 	dirs       list.Model
 	files      list.Model
 	activePane int // 0 = Dirs, 1 = Files
-	selected   map[string]bool
-	recursive  bool
-	err        error
+	
+	currentEntries []fs.DirEntry // Cache to avoid re-reading disk on selection
+	selected       map[string]bool
+	recursive      bool
+	err            error
 }
 
 // Item types for lists
 type dirItem struct {
 	name string
 	path string
+	selected bool
 }
-func (d dirItem) Title() string       { return d.name } // Folder icon?
+func (d dirItem) Title() string { 
+	if d.name == ".." { return d.name } // Don't select parent
+	prefix := "[ ] "
+	if d.selected { prefix = "[x] " }
+	return prefix + d.name 
+}
 func (d dirItem) Description() string { return "" }
 func (d dirItem) FilterValue() string { return d.name }
 
@@ -35,9 +46,14 @@ type fileItem struct {
 	name string
 	path string
 	size int64
+	selected bool
 }
-func (f fileItem) Title() string       { return f.name }
-func (f fileItem) Description() string { return fmt.Sprintf("%d bytes", f.size) } // Format nice later
+func (f fileItem) Title() string {
+	prefix := "[ ] "
+	if f.selected { prefix = "[x] " }
+	return prefix + f.name
+}
+func (f fileItem) Description() string { return fmt.Sprintf("%d bytes", f.size) }
 func (f fileItem) FilterValue() string { return f.name }
 
 func newBrowserModel() browserModel {
@@ -59,17 +75,23 @@ func newBrowserModel() browserModel {
 		activePane: 0,
 		selected:   make(map[string]bool),
 	}
-	m.refresh()
+	m.scanDirectory()
 	return m
 }
 
-func (b *browserModel) refresh() {
+// scanDirectory reads disk and updates currentEntries
+func (b *browserModel) scanDirectory() {
 	entries, err := os.ReadDir(b.currentDir)
 	if err != nil {
 		b.err = err
 		return
 	}
+	b.currentEntries = entries
+	b.updateListItems()
+}
 
+// updateListItems regenerates list.Items based on b.currentEntries and b.selected
+func (b *browserModel) updateListItems() {
 	var dirs []list.Item
 	var files []list.Item
 
@@ -78,26 +100,33 @@ func (b *browserModel) refresh() {
 		dirs = append(dirs, dirItem{name: "..", path: filepath.Dir(b.currentDir)})
 	}
 
-	for _, e := range entries {
+	for _, e := range b.currentEntries {
+		path := filepath.Join(b.currentDir, e.Name())
+		isSelected := b.selected[path]
+
 		if e.IsDir() {
-			// Skip hidden?
-			if strings.HasPrefix(e.Name(), ".") {
-				continue
-			}
-			dirs = append(dirs, dirItem{name: e.Name() + "/", path: filepath.Join(b.currentDir, e.Name())})
+			if strings.HasPrefix(e.Name(), ".") { continue }
+			dirs = append(dirs, dirItem{
+				name: e.Name() + "/", 
+				path: path,
+				selected: isSelected,
+			})
 		} else {
-			// Check support
-			// We handle extension check manually or use scanner helper
-			// Scanner implementation used internal map, maybe expose it?
-			// Or just duplicate logic: png/jpg/webp
 			ext := strings.ToLower(filepath.Ext(e.Name()))
 			if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" {
 				info, _ := e.Info()
-				files = append(files, fileItem{name: e.Name(), path: filepath.Join(b.currentDir, e.Name()), size: info.Size()})
+				files = append(files, fileItem{
+					name: e.Name(), 
+					path: path, 
+					size: info.Size(),
+					selected: isSelected,
+				})
 			}
 		}
 	}
 	
+	// Preserve cursor positions if possible? 
+	// SetItems resets items but keeps index if valid.
 	b.dirs.SetItems(dirs)
 	b.files.SetItems(files)
 }
@@ -106,7 +135,6 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
 
-	// Ensure initialized (simple check, or do in Init)
 	if m.browser.currentDir == "" {
 		m.browser = newBrowserModel()
 	}
@@ -114,73 +142,33 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "tab":
-			m.browser.activePane = (m.browser.activePane + 1) % 2
+		case "tab", "right", "l": // Support Arrow Right and 'l' (vim)
+			if m.browser.activePane == 0 {
+				m.browser.activePane = 1
+			} else if msg.String() == "tab" {
+				m.browser.activePane = 0
+			}
+		case "left", "h": // Support Arrow Left and 'h' (vim)
+			if m.browser.activePane == 1 {
+				m.browser.activePane = 0
+			}
 		case "enter":
 			if m.browser.activePane == 0 {
-				// Change directory
 				i := m.browser.dirs.SelectedItem()
 				if i != nil {
 					d := i.(dirItem)
-					m.browser.currentDir = d.path
-					m.browser.refresh()
-					// Reset cursor?
-					m.browser.dirs.ResetSelected()
+					if d.name == ".." {
+						m.browser.currentDir = d.path
+						m.browser.scanDirectory()
+						m.browser.dirs.ResetSelected()
+					} else {
+						m.browser.currentDir = d.path
+						m.browser.scanDirectory()
+						m.browser.dirs.ResetSelected()
+					}
 				}
-			}
-		case "x":
-			// Toggle recursive scan for "Add"?
-			// Or toggle view mode?
-			// Requirement: "Options: [x] recursive".
-			// This likely affects what happens when we "Add" a folder?
-			// The File Picker desc says: "Done -> add to queue".
-			// If we select a FOLDER in left pane, do we add it?
-			// My browser implementation currently adds items from "selected" map.
-			// Currently I only allow selecting FILES in right pane.
-			// "Left: directories ... Right: image files".
-			// "Space select/unselect".
-			// "Options: [x] recursive"
-			// "Done -> add to queue"
-			
-			// Interpretation:
-			// If I select a directory in Left pane, and press Space, do I select it?
-			// If so, recursive flag applies to that directory addition.
-			
-			// Current implementation:
-			// Space in activePane==1 (files) toggles selection.
-			// Space in activePane==0 (dirs) ?? 
-			
-			// Let's implement Space in Dirs pane to select the dir.
-			// And 'x' to toggle recursive flag in browser model.
-			
-			if m.browser.activePane == 0 {
-				// Support selecting directories?
-				// m.browser.selected is map[string]bool.
-				// If I add a dir path there, Pipeline.AddFiles needs to handle it.
-				// Scanner.Scan(paths, recursive) supports it.
-				// So if I pass directory paths to pipeline, and pipeline uses scanner...
-				// Wait, Pipeline.AddFiles uses os.Stat -> if file, add.
-				// Pipeline.AddFiles logic:
-				// "info, err := os.Stat(path) ... if err == nil { size = info.Size() } ... p.jobs = append"
-				// Pipeline doesn't call Scanner.
-				// Scanner is used in CLI before passing to Pipeline.
-				// In TUI, `m.pipeline.AddFiles(paths)` assumes paths are identifiable jobs?
-				// Pipeline needs to Scan if we pass directories?
-				// Or TUI should Scan before passing to Pipeline.
-				
-				// Fix: TUI "A" handler should Scan selected paths.
-				m.browser.recursive = !m.browser.recursive
-			}
-		case "backspace":
-			// Go up
-			parent := filepath.Dir(m.browser.currentDir)
-			if parent != m.browser.currentDir {
-				m.browser.currentDir = parent
-				m.browser.refresh()
-			}
-		case " ":
-			if m.browser.activePane == 1 {
-				// Toggle file
+			} else {
+			    // Toggle selection on Enter for files
 				i := m.browser.files.SelectedItem()
 				if i != nil {
 					f := i.(fileItem)
@@ -189,46 +177,94 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						m.browser.selected[f.path] = true
 					}
-				}
-			} else {
-				// Toggle Dir?
-				i := m.browser.dirs.SelectedItem()
-				if i != nil {
-					d := i.(dirItem)
-					if m.browser.selected[d.path] {
-						delete(m.browser.selected, d.path)
-					} else {
-						m.browser.selected[d.path] = true
-					}
+					m.browser.updateListItems()
 				}
 			}
-		case "ctrl+a":
-			// Select all in current view
+
+			if m.browser.activePane == 0 {
+				// Prevent recursive toggle on Enter? No, 'x' does that.
+				// m.browser.recursive = !m.browser.recursive 
+			}
+		case "x":
+			if m.browser.activePane == 0 {
+				m.browser.recursive = !m.browser.recursive
+			} else {
+			    // Allow 'x' to mark as well? No, stick to Space/Enter.
+			}
+		case "backspace":
+			parent := filepath.Dir(m.browser.currentDir)
+			if parent != m.browser.currentDir {
+				m.browser.currentDir = parent
+				m.browser.scanDirectory()
+			}
+		case " ":
+			// Toggle Selection
+			var path string
 			if m.browser.activePane == 1 {
+				i := m.browser.files.SelectedItem()
+				if i != nil { path = i.(fileItem).path }
+			} else {
+				i := m.browser.dirs.SelectedItem()
+				if i != nil { 
+					d := i.(dirItem)
+					if d.name != ".." { path = d.path }
+				}
+			}
+
+			if path != "" {
+				if m.browser.selected[path] {
+					delete(m.browser.selected, path)
+				} else {
+					m.browser.selected[path] = true
+				}
+				m.browser.updateListItems() // Re-render to show [x]
+			}
+
+		case "ctrl+a":
+			if m.browser.activePane == 1 {
+				// Select all visible files
 				for _, it := range m.browser.files.Items() {
 					f := it.(fileItem)
 					m.browser.selected[f.path] = true
 				}
+				m.browser.updateListItems()
 			}
+
 		case "a":
 			// Done -> Add to queue
-			// Scan selected
 			var paths []string
-			for p := range m.browser.selected {
-				paths = append(paths, p)
+			
+			// If nothing selected, try to add currently highlighted item
+			if len(m.browser.selected) == 0 {
+				if m.browser.activePane == 1 {
+					i := m.browser.files.SelectedItem()
+					if i != nil { paths = append(paths, i.(fileItem).path) }
+				} else {
+					i := m.browser.dirs.SelectedItem()
+					if i != nil { 
+						d := i.(dirItem)
+						if d.name != ".." { paths = append(paths, d.path) }
+					}
+				}
+			} else {
+				for p := range m.browser.selected {
+					paths = append(paths, p)
+				}
 			}
+			
 			if len(paths) > 0 {
-				// Scan them!
 				res, _ := scanner.Scan(paths, m.browser.recursive)
 				if len(res.Images) > 0 {
 					m.pipeline.AddFiles(res.Images)
 					m.state = StateQueue
 					m.browser.selected = make(map[string]bool)
+					m.browser.updateListItems()
 				}
 			}
 		}
 	case tea.WindowSizeMsg:
-		// Resize lists
+		m.browser.dims.width = m.width
+		m.browser.dims.height = m.height
 		halfWidth := m.width / 2
 		m.browser.dirs.SetWidth(halfWidth - 2)
 		m.browser.files.SetWidth(halfWidth - 2)
@@ -236,7 +272,6 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.browser.files.SetHeight(m.height - 4)
 	}
 
-	// Update active list
 	if m.browser.activePane == 0 {
 		m.browser.dirs, cmd = m.browser.dirs.Update(msg)
 		cmds = append(cmds, cmd)
@@ -249,39 +284,28 @@ func (m MainModel) updateBrowser(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m MainModel) viewBrowser() string {
-	// Simple split view
-	// Highlight active pane border
-	
 	leftStyle := docStyle.Copy().Width(m.width/2 - 4)
 	rightStyle := docStyle.Copy().Width(m.width/2 - 4)
 	
+	borderColor := lipgloss.Color("62") // Purple
+	
 	if m.browser.activePane == 0 {
-		leftStyle = leftStyle.Border(lipgloss.DoubleBorder()).BorderForeground(lipgloss.Color("62"))
+		leftStyle = leftStyle.Border(lipgloss.DoubleBorder()).BorderForeground(borderColor)
 		rightStyle = rightStyle.Border(lipgloss.NormalBorder())
 	} else {
 		leftStyle = leftStyle.Border(lipgloss.NormalBorder())
-		rightStyle = rightStyle.Border(lipgloss.DoubleBorder()).BorderForeground(lipgloss.Color("62"))
+		rightStyle = rightStyle.Border(lipgloss.DoubleBorder()).BorderForeground(borderColor)
 	}
-	
-	// Custom delegate to show selection for files
-	// For now just standard list
-	
-	// Hack to show selection status in title or description?
-	// bubbles/list doesn't support dynamic item update easily without SetItems again.
-	// But we render the list.
-	// We might need a custom item delegate to render the [x].
-	
-	// Recursive status
-	recStatus := "[ ] Recursive (x)"
-	if m.browser.recursive {
-		recStatus = "[x] Recursive (x)"
-	}
+
+	// Status line
+	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	status := statusStyle.Render(fmt.Sprintf("Selected: %d | Recursive: %v (X) | [Space/Ent] Toggle | [A] Add | [Arrow/Tab] Move", len(m.browser.selected), m.browser.recursive))
 	
 	return lipgloss.JoinVertical(lipgloss.Left,
 		lipgloss.JoinHorizontal(lipgloss.Top,
 			leftStyle.Render(m.browser.dirs.View()),
 			rightStyle.Render(m.browser.files.View()),
 		),
-		docStyle.Render(recStatus),
+		docStyle.Render(status),
 	)
 }

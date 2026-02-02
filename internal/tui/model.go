@@ -9,6 +9,7 @@ import (
 
 	"github.com/gmsakibursabbir/tinitui/internal/config"
 	"github.com/gmsakibursabbir/tinitui/internal/pipeline"
+	"github.com/gmsakibursabbir/tinitui/internal/version"
 )
 
 type SessionState int
@@ -263,7 +264,7 @@ func (m MainModel) renderTopBar() string {
 		tabs = strings.Replace(tabs, "[ History ]", "[ *History* ]", 1)
 	}
 	
-	return titleStyle.Render("TiniTUI v1.0.3") + " " + status + " | " + mode + " | " + tabs
+	return titleStyle.Render("TiniTUI "+version.Version) + " " + status + " | " + mode + " | " + tabs
 }
 
 func (m MainModel) renderBottomBar() string {
