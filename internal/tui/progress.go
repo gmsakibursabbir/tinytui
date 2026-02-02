@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -125,20 +126,118 @@ func waitForPipeline(p *pipeline.Pipeline) tea.Cmd {
 // But MainModel.Update delegates to sub-update functions.
 // Let's add handling in MainModel.Update for *pipeline.Job and pass it down.
 
+// Helper to format bytes
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
 func (m MainModel) viewProgress() string {
-	if !m.progress.active {
-		return "Ready to compress..."
+	// Calculate stats from pipeline
+	jobs := m.pipeline.Jobs()
+	total := len(jobs)
+	if total == 0 {
+		return docStyle.Render("No items in queue.")
+	}
+
+	completed := 0
+	var totalOrig, totalComp, totalSaved int64
+
+	
+	// Process jobs for stats and recent log
+	// Iterate in reverse for recent log? Or just separate loop.
+	for _, j := range jobs {
+		if j.Status == pipeline.StatusDone {
+			completed++
+			totalOrig += j.OriginalSize
+			totalComp += j.CompressedSize
+			totalSaved += j.SavedBytes
+		} else if j.Status == pipeline.StatusFailed {
+			completed++
+		}
+	}
+
+	// Completion View
+	if m.progress.done {
+		percentSaved := 0.0
+		if totalOrig > 0 {
+			percentSaved = (float64(totalSaved) / float64(totalOrig)) * 100
+		}
+		
+		summary := fmt.Sprintf(
+			"COMPLETED!\n\n"+
+			"Total Files:      %d\n"+
+			"Original Size:    %s\n"+
+			"Compressed Size:  %s\n"+
+			"Total Savings:    %s (%.1f%%)\n\n"+
+			"Press [Esc] to return to Dashboard",
+			total,
+			formatBytes(totalOrig),
+			formatBytes(totalComp),
+			formatBytes(totalSaved),
+			percentSaved,
+		)
+		
+		return lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("62")).
+			Padding(1, 2).
+			Align(lipgloss.Center).
+			Render(summary)
+	}
+
+	// Active Processing View
+	pad := "\n"
+	
+	// Collect recent logs (last 5 done)
+	count := 0
+	activeFile := "Waiting..."
+	
+	// Find active
+	for _, j := range jobs {
+		if j.Status == pipeline.StatusProcessing {
+			activeFile = "Processing: " + filepath.Base(j.FilePath)
+			break
+		}
 	}
 	
-	pad := "\n" + strings.Repeat(" ", 2)
-	
-	prog := m.progress.progress.ViewAs(float64(m.progress.completed) / float64(m.progress.total))
+	// Recent finished
+	logBuilder := strings.Builder{}
+	logBuilder.WriteString("Recent Activity:\n")
+	for i := len(jobs) - 1; i >= 0; i-- {
+		j := jobs[i]
+		if j.Status == pipeline.StatusDone {
+			if count < 5 {
+				logBuilder.WriteString(fmt.Sprintf("[✓] %s: -%s (-%.0f%%)\n", 
+					filepath.Base(j.FilePath), 
+					formatBytes(j.SavedBytes), 
+					j.SavedPercent))
+				count++
+			}
+		} else if j.Status == pipeline.StatusFailed {
+			if count < 5 {
+				logBuilder.WriteString(fmt.Sprintf("[X] %s: Failed\n", filepath.Base(j.FilePath)))
+				count++
+			}
+		}
+	}
+
+	prog := m.progress.progress.ViewAs(float64(completed) / float64(total))
 	
 	return docStyle.Render(
-		"Compressing..." + "\n\n" +
-		m.progress.spinner.View() + " Processing files" + "\n\n" +
+		"Compressing Assets..." + "\n\n" +
+		m.progress.spinner.View() + " " + activeFile + "\n\n" +
 		prog + "\n\n" +
-		fmt.Sprintf("%d / %d processed", m.progress.completed, m.progress.total) +
-		pad + "(Press 'x' to cancel)",
+		fmt.Sprintf("%d / %d processed", completed, total) + "\n" +
+		pad + logBuilder.String() + "\n" +
+		"(Press 'x' to cancel)",
 	)
 }
