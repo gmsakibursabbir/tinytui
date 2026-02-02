@@ -3,5 +3,5 @@ package version
 var (
 	// Version is the current application version.
 	// This should be updated for each release.
-	Version = "v2.1.1"
+	Version = "v2.2.0"
 )
